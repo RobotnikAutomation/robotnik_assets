@@ -36,6 +36,10 @@ do_install() {
 	$sh_c "chmod +x /usr/local/sbin/toggle-default-boot-partition"
 
 	if [ "$curr_boot" = "$main_boot" ]; then
+		$sh_c 'apt-get -qq update >/dev/null'
+	  $sh_c 'DEBIAN_FRONTEND=noninteractive apt-get -y -qq install gawk >/dev/null'
+		$sh_c 'sed -i "/^GRUB_SAVEDEFAULT=/d;s/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved\nGRUB_SAVEDEFAULT=true/" /etc/default/grub'
+		$sh_c 'update-grub >/dev/null'
 		$sh_c "wget -O /usr/local/sbin/list-boot-partition $repo_url/list-boot-partition -o /dev/null"
 		$sh_c "chmod +x /usr/local/sbin/list-boot-partition"
 	fi
