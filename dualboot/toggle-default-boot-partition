@@ -1,0 +1,287 @@
+#!/bin/bash
+# Copyright 2024 Robotnik Automation S.L.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#    1. Redistributions of source code must retain the above copyright notice,
+#       this list of conditions and the following disclaimer.
+#
+#    2. Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+#
+#    3. Neither the name of the copyright holder nor the names of its
+#       contributors may be used to endorse or promote products derived from
+#       this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+#
+# Maintanier: Guillem Gari  <ggari@robotnik.es> Robotnik Automation S.L.
+
+set -e
+set -o pipefail
+set -u
+set -o nounset
+
+#Colour
+red_colour='\033[0;31m'
+green_colour='\033[0;32m'
+light_purple_colour='\033[1;35m'
+err_colour="${red_colour}"
+nfo_colour="${light_purple_colour}"
+suc_colour="${green_colour}"
+no_colour='\033[0m'
+
+version=1.0.0
+boot_partition=/dev/nvme0n1p3
+selected_partition=0
+boot_folder="/boot"
+temp_folder=""
+executable_name="${0}"
+debug=1
+
+cmd_change_boot='grub-set-default --boot-directory=${temp_folder}${boot_folder} ${selected_partition}'
+cmd_create_dir='mktemp -d'
+cmd_delete_dir='rmdir ${temp_folder}'
+cmd_mount_part='mount -t auto ${boot_partition} ${temp_folder}'
+cmd_umount_part='umount ${temp_folder}'
+check_mount_part='grep ${temp_folder} -q /proc/mounts'
+
+msg_str_create_temp_dir='Created temporary folder: ${temp_folder}'
+msg_str_mount_partition='Mounted partition ${boot_partition} to ${temp_folder}'
+msg_str_umount_partition='Unmounted partition from ${temp_folder}'
+msg_str_delete_temp_folder='Deleted temporary folder: ${temp_folder}'
+msg_str_change_boot='Changed default boot entry to ${selected_partition}'
+
+err_str_root_permission='You need root privileges try: sudo ${executable_name}'
+err_str_create_temp_dir='Failed to create temporary directory'
+err_str_mount_partition='Failed to mount partition ${boot_partition} to ${temp_folder}'
+err_str_umount_partition='Failed to unmount partition from ${temp_folder}'
+err_str_delete_temp_folder='Failed to delete temporary folder ${temp_folder}'
+err_str_change_boot='Failed to change default boot entry to ${selected_partition}'
+
+suc_str_final='Changed default boot to ${selected_partition}'
+
+function err() {
+  local message="${1}"
+  if [[ ${debug} -eq 1 ]]; then
+    err_debug "${message}"
+    return 0
+  fi
+  eval "echo -e "'"'"${err_colour}[ERROR]${no_colour}:   ${message}"'"'" 2>&1"
+}
+
+function msg() {
+  if [[ ${debug} -eq 1 ]]; then
+    return 0
+  fi
+  local message="${1}"
+  eval "echo -e "'"'"${nfo_colour}[INFO]${no_colour}:    ${message}"'"'""
+}
+
+function succ() {
+  local message="${1}"
+  eval "echo -e "'"'"${suc_colour}[SUCCESS]${no_colour}: ${message}"'"'""
+}
+
+function err_debug() {
+    local mesg=$1; shift
+    eval "mesg=\"${mesg}\""
+    printf "ERROR: $(basename "${BASH_SOURCE[${SOURCE_LINE_OVERRIDE:-1}]}")#${BASH_LINENO[${BASH_LINE_OVERRIDE:-0}]} %s\n\n" "$mesg" 1>&2
+    if [[ $# -gt 0 ]]; then
+        printf '%s ' "${@}" 1>&2
+        printf '\n\n'
+    fi
+    # exit 1
+}
+
+function get_executable_name() {
+  # Get the command name without the path
+  local directory=$(dirname "${0}")
+  local command_name="${0##*/}"
+  if echo "$PATH" | grep -q -E "(^|:)$directory(:|$)"; then
+    executable_name="${command_name}"
+  fi
+  return 0
+}
+
+function help() {
+cat << EOF
+Default grub entry changer
+Version: ${version}
+
+Usage:
+${executable_name}
+${executable_name} -b [BOOT ENTRY]
+${executable_name} --boot [BOOT ENTRY]
+${executable_name} -p [PARTITION]
+${executable_name} --partition [PARTITION]
+${executable_name} -d
+${executable_name} --debug
+
+Optional arguments:
+ -b, --boot [BOOT ENTRY]     Specify the boot entry to change to
+                             defaults to ${selected_partition}
+
+ -p, --partition [PARTITION] Specify the grub partition
+                             default is ${boot_partition}
+
+ -d, --debug                 Activate debug mode
+
+ -h, --help                  Shows this help
+
+ -v, --version               Shows the version of the script
+
+EOF
+  return 0
+}
+
+function version() {
+cat << EOF
+${executable_name} (Default grub entry changer): ${version}
+
+Copyright (C) 2024 Robotnik Automation S.L.
+License BSD-3: BSD 3-clause license <https://opensource.org/licenses/BSD-3-Clause>.
+
+Written by Guillem Gari. ggari@robotnik.es
+EOF
+}
+
+function parse_args() {
+  local key=""
+  while [[ $# -gt 0 ]]; do
+    key="${1}"
+    case "${key}" in
+      --boot|-b)
+        shift
+        selected_partition="${1}"
+        ;;
+      --partition|-p)
+        shift
+        boot_partition="${1}"
+        ;;
+      --debug|-d)
+        debug=0
+        exit 0
+        ;;
+      --help|-h)
+        help
+        exit 0
+        ;;
+      --version|-v)
+        version
+        exit 0
+        ;;
+    esac
+    shift
+  done
+  return 0
+}
+
+function check_root_permission() {
+  if [[ "${EUID}" = 0 ]]; then
+    return 0
+  else
+    err "${err_str_root_permission}"
+    return 1
+  fi
+}
+
+function create_tempfolder() {
+  if ! eval "temp_folder=$(${cmd_create_dir})"; then
+    err "${err_str_create_temp_dir}"
+    return 1
+  fi
+  msg "${msg_str_create_temp_dir}"
+  return 0
+}
+
+function mount_partition() {
+  if ! eval "${cmd_mount_part}"; then
+    err "${err_str_mount_partition}"
+    return 1
+  fi
+  msg "${msg_str_mount_partition}"
+  return 0
+}
+
+function umount_partition() {
+  if ! eval "${check_mount_part}"; then
+    return 0
+  fi
+  sleep 0.5
+  if ! eval "${cmd_umount_part}"; then
+    err "${err_str_umount_partition}"
+    return 1
+  fi
+  msg "${msg_str_umount_partition}"
+  return 0
+}
+
+function delete_tempfolder() {
+  if [[ -d ${temp_folder} ]]; then
+      return 0
+  fi
+  if ! eval "${cmd_delete_dir}"; then
+    err "${err_str_delete_temp_folder}"
+    return 1
+  fi
+  msg "${msg_str_delete_temp_folder}"
+  return 0
+}
+
+function change_boot() {
+  if ! eval "${cmd_change_boot}"; then
+    err "${err_str_change_boot}"
+    return 1
+  fi
+
+  msg "${msg_str_change_boot}"
+  return 0
+}
+
+function full_change_boot() {
+  if ! mount_partition; then
+    return 1
+  fi
+  if ! change_boot; then
+    return 1
+  fi
+  return 0
+}
+
+function cleanup() {
+  if [[ -n "${temp_folder}" ]]; then
+    umount_partition
+    delete_tempfolder
+  fi
+}
+
+function main() {
+  get_executable_name
+  parse_args "$@"
+  check_root_permission || return 1
+  create_tempfolder || return 1
+  full_change_boot || return 1
+  succ "${suc_str_final}"
+  return 0
+}
+
+trap 'cleanup; exit $?' EXIT
+
+# Capture the exit code of main and pass it to cleanup on exit
+main "$@"
+exit_code=$?
+cleanup
+exit $exit_code
