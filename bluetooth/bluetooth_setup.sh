@@ -75,8 +75,7 @@ elif [ "${robot_name}" = "kevn1" ];
 then 
 number_to_add=00:60:
 else
-echo "invalid hostname, aborting"
-exit 1
+number_to_add=00:65:
 fi
 new_mac="${number_to_add}$(echo "$sn" | sed 's/\(..\)\(..\)\(..\)\(..\)/\1:\2:\3:\4/')"
 
